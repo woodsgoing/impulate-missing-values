@@ -7,10 +7,10 @@ Created on Mon Oct 15 13:48:02 2018
 
 import pandas as pd # package for high-performance, easy-to-use data structures and data analysis
 import numpy as np # fundamental package for scientific computing with Python
-
+import time
 import os
 
-debug = True
+_DEBUG = True
 
 FILL_NA = 'nan_fill'
 
@@ -18,7 +18,7 @@ def one_hot_encoder(df, nan_as_category = True):
     original_columns = list(df.columns)
     df = pd.get_dummies(df, dummy_na= True,drop_first=True)
     new_columns = [c for c in df.columns if c not in original_columns]
-    const_columns = [c for c in new_columns if df[c].dtype != 'object' and sum(df[c]) == 0]
+    const_columns = [c for c in new_columns if df[c].dtype != 'object' and sum(df[c]) == 0 and np.std(df[c]) == 0]
     df.drop(const_columns, axis = 1, inplace = True)
     new_columns = [c for c in new_columns if c not in const_columns]
     return df, new_columns
@@ -82,22 +82,23 @@ def setEnvInfo(filepath, filename):
 #    if not os.path.exists(sourcefilepath):
 #        os.mkdir(sourcefilepath) 
 
-def _log(*arg):
+def _log(*arg, mode):
     global sourcefilename
     global sourcefilepath
     if sourcefilename == '' or sourcefilepath == '':
-        return    
-    with open(sourcefilepath+sourcefilename+'.log', "a+") as text_file:
+        return  
+    timeline = time.strftime("%Y_%m_%d", time.localtime()) 
+    with open(sourcefilepath+sourcefilename+mode+timeline+'.fillna', "a+") as text_file:
         print(*arg, file=text_file)
- 
+
 def trace(*arg):
-    _log(*arg)
+    _log(*arg, mode='trace')
 
 def debug(*arg):
-    if debug == True:
-        _log(*arg)
+    if _DEBUG == True:
+        _log(*arg, mode = 'debug')
 
-        
+
     
 def process_missing(dataframe, target='', model = 'tree', method='auto', \
                     binning_missing_ratio=0.75, neighbour_num=-1):
@@ -139,10 +140,10 @@ def process_missing(dataframe, target='', model = 'tree', method='auto', \
     if sourcefilename != '' or sourcefilepath != '':
         dataframe.to_csv(sourcefilepath+sourcefilename+'.in.csv', index= False)
     dataframe = add_nan_ratio(dataframe)
-    dataframe = fill_nan_status(dataframe)
     dataframe = fill_nan(dataframe, target=target, model=model, method=method, \
                          binning_missing_ratio=binning_missing_ratio, \
                          neighbour_num=neighbour_num)
+#    dataframe = fill_nan_status(dataframe)
     if sourcefilename != '' or sourcefilepath != '':
         dataframe.to_csv(sourcefilepath+sourcefilename+'.out.csv', index= False)
 NAN_STATUS = '_is_nan'
@@ -164,7 +165,7 @@ def fill_nan_status(dataframe, feature=''):
     -------
     dataframe with new missing status feature(s)
     """
-    df = dataframe
+    df = dataframe.copy(deep=True)
     nan_num = df.isnull().sum()
 #    if feature != '' and nan_num[feature] > 0:
     if feature != '':
@@ -238,6 +239,7 @@ def fill_nan(dataframe, target='', model = 'tree', method='auto', binning_missin
             continue;
 
         # binning if binning_missing_ratio is setup
+        trace(f_+' missing ratio: '+str(percent[f_]))
         if percent[f_] > binning_missing_ratio:
             dataframe_int = binning_feature(dataframe_int, f_)
             continue
@@ -255,9 +257,9 @@ def fill_nan(dataframe, target='', model = 'tree', method='auto', binning_missin
             df,acc = fill_nan_mean(df_train, f_)
         elif method == 'knn':
             df,acc = fill_nan_knn(df_train, f_, target)
-        if method == 'lgbm':
+        elif method == 'lgbm':
             df,acc = fill_nan_lgbm(df_train, f_, target)
-        if method == 'decision tree':
+        elif method == 'decision tree':
             df,acc = fill_nan_decisiontree(df_train, f_, target)
         elif method == 'bayes':
             df,acc = fill_nan_bayes(df_train, f_, target)
@@ -296,7 +298,7 @@ def binning_feature(dataframe, feature):
     return df
 
 def fill_na_performance(df, feature, filled):
-        if debug == False:
+        if _DEBUG == False:
             return
         feature_diff = pd.DataFrame()
         feature_diff['original'] = df[feature]
@@ -335,8 +337,8 @@ def check_inexistence_nan(dataframe, feature, target):
         if feature_test == feature or feature_test == target:
             continue
         
-        if feature_test == 'ELEVATORS_MODE':
-            feature_test = feature_test
+#        if feature_test == 'ELEVATORS_MODE':
+#            feature_test = feature_test
             
         f_temp = dataframe[feature_test]
         df = pd.concat([feature_nan,f_temp],axis=1)
@@ -350,7 +352,7 @@ def check_inexistence_nan(dataframe, feature, target):
         if featue_nan_len2 == 0:
             continue
         
-        # binning number(as category) which conatin 95% feature_na
+        # transform number2Str which behaviors as category
         if df[feature_test].dtype != 'object':
             value_count = df[feature_test].value_counts()
             if len(value_count) < INEXISTENCE_NAN_NUMBER2NOMINAL_NUM \
@@ -372,13 +374,16 @@ def check_inexistence_nan(dataframe, feature, target):
         '''
         # Here all feature_test are of object type
         # binning cat which contain most(95%) feature_na
-        if df[feature_test].dtype == 'object':
+#        if df[feature_test].dtype == 'object':
+        if df_feature_nan[feature_test].dtype == 'object':
             df_feature_nan_ratio = df_feature_nan[feature_test].value_counts().sort_values(ascending = False)\
                 /df_feature_nan.shape[0]
             count = 0
             value_list = []
             for value_index in df_feature_nan_ratio.index:
-                count = count + df_feature_nan_ratio[value_index]
+                if df_feature_nan_ratio.index.dtype != 'object':
+                    value_index = str(value_index) 
+                count = count + df_feature_nan_ratio.loc[value_index]
                 value_list.append(value_index)
                 if count >= INEXISTENCE_NAN_CORR_RATIO:
                     break
@@ -403,7 +408,7 @@ def filt_nan_hi_corr_feature(dataframe, feature, target):
     df_nan = fill_nan_status(dataframe)
     nan_status_list = [f_ for f_ in df_nan.columns if NAN_STATUS in f_ \
                        and target not in f_ and feature not in f_]
-    feature_nan = dataframe[feature+NAN_STATUS]
+    feature_nan = df_nan[feature+NAN_STATUS]
     feature_data = 1 - feature_nan
     nan_hi_corr = []
     for f_ in nan_status_list:
@@ -414,8 +419,8 @@ def filt_nan_hi_corr_feature(dataframe, feature, target):
         if internal_nan_ratio > NAN_INT_RATIO\
         or internal_nan_ratio/(external_nan_ratio+0.001)>NAN_INT_EXT_RATIO:
             nan_hi_corr.append(f_)
-            debug('nan_hi_corr_feature '+feature+' & '+f_[:-4]+', nan_ratio: '+internal_nan_ratio)
-            debug('nan_hi_corr_feature: int/ext nan_ratio'+internal_nan_ratio/(external_nan_ratio+0.001))
+            debug('nan_hi_corr_feature '+feature+' & '+f_[:-6]+', nan_ratio: '+str(internal_nan_ratio))
+            debug('nan_hi_corr_feature: int/ext nan_ratio'+str(internal_nan_ratio/(external_nan_ratio+0.001)))
     feature_drop = [f_.replace(NAN_STATUS,'') for f_ in nan_hi_corr]
     df_train = dataframe.drop(feature_drop,axis=1)
     trace('nan_hi_corr_feature '+feature+' ', feature_drop)
