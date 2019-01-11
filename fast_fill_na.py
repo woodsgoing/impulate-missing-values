@@ -3,6 +3,7 @@
 Created on Mon Oct 15 13:48:02 2018
 
 @author: june
+Deprecated, use fast_impute instead.
 """
 
 import pandas as pd # package for high-performance, easy-to-use data structures and data analysis
